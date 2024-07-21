@@ -72,6 +72,17 @@ class TestScanner(unittest.TestCase):
             scanner.scan_devices()
             self.assertEqual(scanner.get_device_name("mac_address"), "hostname")
 
+    def test_get_all_devices(self):
+        devices = {"mac_address": DeviceInfo("mac_address", "hostname", True, None)}
+        with mock.patch.object(QuantumGatewayScanner, "_get_gateway") as mock_get_gateway:
+            mock_gateway = mock.create_autospec(Gateway)
+            mock_gateway.check_auth.return_value = True
+            mock_gateway.get_all_devices.return_value = devices
+            mock_get_gateway.return_value = mock_gateway
+
+            scanner = QuantumGatewayScanner("192.168.1.1", "password")
+            self.assertEqual(scanner.get_all_devices(), devices)
+
 
 @requests_mock.Mocker()
 class TestGateway1100(unittest.TestCase):

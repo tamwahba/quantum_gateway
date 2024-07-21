@@ -294,3 +294,9 @@ class QuantumGatewayScanner:
 
     def get_device_name(self, device: str) -> str:
         return self.connected_devices.get(device)
+
+    def get_all_devices(self):
+        self.all_devices = {}
+        if self._gateway.check_auth():
+            self.all_devices = self._gateway.get_all_devices()
+        return self.all_devices
