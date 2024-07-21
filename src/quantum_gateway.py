@@ -61,10 +61,13 @@ class Gateway(ABC):
         """
         return NotImplementedError()
 
-    @abstractmethod
     def get_connected_devices(self) -> Dict[str, str]:
         """Gets the connected devices as a MAC address -> hostname map."""
-        return NotImplementedError()
+        return {
+            device.mac: device.hostname
+            for device in self.get_all_devices().values()
+            if device.is_connected
+        }
 
     @abstractmethod
     def get_all_devices(self) -> Dict[str, DeviceInfo]:
@@ -101,15 +104,10 @@ class Gateway1100(Gateway):
                 device['mac'],
                 device['name'],
                 device['status'],
-                _get_ip_address(device['ipAddress'], device['ipv6Address'])
+                _get_ip_address(device.get('ipAddress'), device.get('ipv6Address'))
             )
             for device in devices
         }
-
-    def get_connected_devices(self):
-        devices_raw = self.session.get(self.host + '/api/devices', timeout=TIMEOUT, verify=self.verify)
-        devices = json.loads(devices_raw.text)
-        return {device['mac']: device['name'] for device in devices if device['status']}
 
     def check_auth(self):
         res = self.session.get(self.host + '/api/devices', timeout=TIMEOUT, verify=self.verify)
@@ -212,58 +210,6 @@ class Gateway3100(Gateway):
                     data.get('activity') == 1,
                     None,
                 )
-
-        lines = res.text.split("\n")
-        for line in lines:
-            if "known_device_list" in line:
-                esprima.parseScript(line, {}, visitor)
-
-        return connected_devices
-
-    def get_connected_devices(self):
-        res = self.session.get(
-            self.host + '/cgi/cgi_owl.js', timeout=TIMEOUT, verify=self.verify
-        )
-
-        if res.status_code != HTTPStatus.OK:
-            _LOGGER.warning('Failed to get connected devices from gateway; '
-                            'got HTTP status code %s', res.status_code)
-
-        connected_devices = {}
-
-        # Unfortunately, the data is provided to the frontend not as a JSON
-        # blob, but as some JavaScript to execute.  The below code uses a
-        # JavaScript parser and AST visitor to extract the known device data
-        # from the script.
-        #
-        # Example response:
-        #
-        # addROD('known_device_list', { 'known_devices': [ { 'mac': 'xx:xx:xx:xx:xx:xx', 'hostname': 'name' } ] });
-        def visitor(node, metadata):
-            if node.type != 'CallExpression':
-                return
-
-            if node.callee.type != 'Identifier' or node.callee.name != 'addROD':
-                return
-
-            if node.arguments[0].value != 'known_device_list':
-                return
-
-            known_devices_node = None
-            for prop in node.arguments[1].properties:
-                if prop.key.value == 'known_devices':
-                    known_devices_node = prop.value
-
-            if known_devices_node is None:
-                _LOGGER.debug('Failed to find known_devices object in response data')
-                return
-
-            for device in known_devices_node.elements:
-                data = {prop.key.value: prop.value.value for prop in device.properties}
-                if 'activity' not in data or 'mac' not in data or 'hostname' not in data:
-                    continue
-                if data['activity'] == 1:
-                    connected_devices[data['mac']] = data['hostname']
 
         lines = res.text.split("\n")
         for line in lines:

@@ -10,7 +10,8 @@ from requests.api import request
 import requests_mock
 import re
 
-from quantum_gateway import Gateway, Gateway1100, Gateway3100, QuantumGatewayScanner
+from quantum_gateway import DeviceInfo, Gateway, Gateway1100, Gateway3100,\
+    QuantumGatewayScanner
 
 G3100_LOGIN_STATUS_MATCHER = re.compile('^.*/loginStatus.cgi$')
 
@@ -80,8 +81,21 @@ class TestGateway1100(unittest.TestCase):
     PASSWORD_SALT = 'TEST_SALT'
     CORRECT_PASSWORD = 'correct'
     WRONG_PASSWORD = 'wrong'
+    ALL_DEVICES = {
+        '00:11:22:33:44:55': DeviceInfo('00:11:22:33:44:55', 'iphone', True, "192.168.1.1"),
+        '00:00:00:00:00:00': DeviceInfo('00:00:00:00:00:00', 'computer', True, "192.168.1.2"),
+        '11:11:11:11:11:11': DeviceInfo('11:11:11:11:11:11', 'disconnected', False, "fdde:6cb2:070a:219a:a092:5969:be0d:19ef"),
+        '11:11:11:22:22:22': DeviceInfo('11:11:11:22:22:22', 'disconnected-empty-ips', False, None),
+        '33:33:33:22:22:22': DeviceInfo('33:33:33:22:22:22', 'disconnected-missing-ips', False, None),
+    }
     CONNECTED_DEVICES = {'00:11:22:33:44:55': 'iphone', '00:00:00:00:00:00': 'computer'}
-    SERVER_CONNECTED_DEVICES_RESPONSE = '[{"mac": "00:11:22:33:44:55", "name": "iphone", "status": true}, {"mac": "00:00:00:00:00:00", "name": "computer", "status": true}, {"mac": "11:11:11:11:11:11", "name": "disconnected", "status": false}]'
+    SERVER_CONNECTED_DEVICES_RESPONSE = '''[
+        {"mac": "00:11:22:33:44:55", "name": "iphone", "status": true, "ipAddress": "192.168.1.1", "ipv6Address": ""},
+        {"mac": "00:00:00:00:00:00", "name": "computer", "status": true, "ipAddress": "192.168.1.2", "ipv6Address": "fdde:6cb2:070a:219a:a092:5969:be0d:19ee"},
+        {"mac": "11:11:11:11:11:11", "name": "disconnected", "status": false, "ipAddress": "", "ipv6Address": "fdde:6cb2:070a:219a:a092:5969:be0d:19ef"},
+        {"mac": "11:11:11:22:22:22", "name": "disconnected-empty-ips", "status": false, "ipAddress": "", "ipv6Address": ""},
+        {"mac": "33:33:33:22:22:22", "name": "disconnected-missing-ips", "status": false}
+    ]'''
 
     logged_in = False
 
@@ -116,6 +130,18 @@ class TestGateway1100(unittest.TestCase):
 
         gateway.check_auth()
         self.assertEqual(gateway.get_connected_devices(), self.CONNECTED_DEVICES)
+
+    def test_get_all_devices(self, m):
+        self.setup_matcher(m)
+
+        host = 'mywifigateway.com'
+        password = self.CORRECT_PASSWORD
+
+        gateway = Gateway1100(host, password)
+
+        gateway.check_auth()
+        self.assertEqual(gateway.get_all_devices(), self.ALL_DEVICES)
+
 
     def setup_matcher(self, m):
         def devices_callback(request, context):
@@ -195,6 +221,22 @@ class TestGateway3100(unittest.TestCase):
         gateway = Gateway3100(self.host, self.password)
 
         self.assertCountEqual(gateway.get_connected_devices(), {"xx:xx:xx:xx:xx:xx": "hostname"})
+
+    def test_get_all_devices(self, m):
+        device_info_response_text = """
+        addROD("known_device_list", { "known_devices": [{ "mac": "xx:xx:xx:xx:xx:xx", "hostname": "active_device", "activity": 1 },{ "mac": "xx:xx:xx:xx:xx:ab", "hostname": "inactive_device", "activity": 0 }] });
+        """
+
+        self._match_successful_login(m)
+        m.get(self.DEVICE_INFO_MATCHER, text=device_info_response_text)
+        self._match_logout(m)
+
+        gateway = Gateway3100(self.host, self.password)
+
+        self.assertEqual(gateway.get_all_devices(), {
+            "xx:xx:xx:xx:xx:xx": DeviceInfo("xx:xx:xx:xx:xx:xx", "active_device", True, None),
+            "xx:xx:xx:xx:xx:ab": DeviceInfo("xx:xx:xx:xx:xx:ab", "inactive_device", False, None),
+        })
 
     def _match_successful_login(self, m):
         m.get(G3100_LOGIN_STATUS_MATCHER, json=self.LOGGED_OUT_STATUS_JSON)
